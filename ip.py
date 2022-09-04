@@ -1,4 +1,6 @@
+from ipaddress import ip_address, ip_network
 from iputils import *
+import struct
 
 
 class IP:
@@ -13,6 +15,7 @@ class IP:
         self.enlace.registrar_recebedor(self.__raw_recv)
         self.ignore_checksum = self.enlace.ignore_checksum
         self.meu_endereco = None
+        self.identification = 0
 
     def __raw_recv(self, datagrama):
         dscp, ecn, identification, flags, frag_offset, ttl, proto, \
@@ -24,13 +27,36 @@ class IP:
         else:
             # atua como roteador
             next_hop = self._next_hop(dst_addr)
-            # TODO: Trate corretamente o campo TTL do datagrama
-            self.enlace.enviar(datagrama, next_hop)
+            vihl, dscpecn, total_len, identification, flagsfrag, ttl, proto, \
+            checksum, src_addr, dest_addr = \
+            struct.unpack('!BBHHHBBHII', datagrama[:20])
+            ttl -= 1
+            if not ttl:
+                typ = 11
+                code = 0
+                checksum_icmp = calc_checksum(struct.pack('!BBHI', typ,code,0,0)+datagrama[:28])
+                icmp = struct.pack('!BBHI', typ,code,checksum_icmp,0) + datagrama[:28]
+                next_hop = self._next_hop(src_addr)
+                addr_int = int.from_bytes(str2addr(self.meu_endereco), "big")
+                checksum = calc_checksum(struct.pack('!BBHHHBBHII', vihl, dscpecn, 20+len(icmp), identification, flagsfrag, 64, 1, 0, addr_int, src_addr))
+                datagrama = struct.pack('!BBHHHBBHII', vihl, dscpecn, 20+len(icmp), identification, flagsfrag, 64, 1, checksum, addr_int, src_addr) + icmp
+                self.identification+=1
+                self.enlace.enviar(datagrama, next_hop)
+            else:
+                checksum = calc_checksum(struct.pack('!BBHHHBBHII', vihl, dscpecn, total_len, identification, flagsfrag, ttl, proto, 0, src_addr, dest_addr))
+                datagrama = struct.pack('!BBHHHBBHII', vihl, dscpecn, total_len, identification, flagsfrag, ttl, proto, checksum, src_addr, dest_addr) + datagrama[20:]
+                self.enlace.enviar(datagrama, next_hop)
+
 
     def _next_hop(self, dest_addr):
         # TODO: Use a tabela de encaminhamento para determinar o próximo salto
         # (next_hop) a partir do endereço de destino do datagrama (dest_addr).
         # Retorne o next_hop para o dest_addr fornecido.
+        prox = [i for i in self.tabela if ip_address(dest_addr) in ip_network(i[0])]
+        prox.sort(key=lambda x: ip_network(x[0]).prefixlen, reverse=True) # passo 3, desepantado pela maior len
+        if prox:
+            return prox[0][1]
+
         pass
 
     def definir_endereco_host(self, meu_endereco):
@@ -51,7 +77,7 @@ class IP:
         """
         # TODO: Guarde a tabela de encaminhamento. Se julgar conveniente,
         # converta-a em uma estrutura de dados mais eficiente.
-        pass
+        self.tabela = tabela
 
     def registrar_recebedor(self, callback):
         """
@@ -67,4 +93,6 @@ class IP:
         next_hop = self._next_hop(dest_addr)
         # TODO: Assumindo que a camada superior é o protocolo TCP, monte o
         # datagrama com o cabeçalho IP, contendo como payload o segmento.
+        checksum = calc_checksum(struct.pack('!BBHHHBBH', 69, 0, 20+len(segmento), self.identification, 0, 64, 6, 0) + str2addr(self.meu_endereco) + str2addr(dest_addr))
+        datagrama = struct.pack('!BBHHHBBH', 69, 0, 20+len(segmento), self.identification, 0, 64, 6, checksum) + str2addr(self.meu_endereco) + str2addr(dest_addr) + segmento
         self.enlace.enviar(datagrama, next_hop)
