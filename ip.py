@@ -51,7 +51,6 @@ class IP:
     def _next_hop(self, dest_addr):
         # TODO: Use a tabela de encaminhamento para determinar o próximo salto
         # (next_hop) a partir do endereço de destino do datagrama (dest_addr).
-        # Retorne o next_hop para o dest_addr fornecido.
         prox = [i for i in self.tabela if ip_address(dest_addr) in ip_network(i[0])]
         prox.sort(key=lambda x: ip_network(x[0]).prefixlen, reverse=True) # passo 3, desepantado pela maior len
         if prox:
